@@ -230,14 +230,7 @@ do
     echo ""
 done
 
-# punctajul pe corectitudine este conditionat de minim un test de scalabilitate trecut
-if [ $scalability == 0 ]
-then
-    echo "W: Au picat toate testele de scalabilitate, corectitudinea se considera 0"
-    correctness=0
-else
-    correctness=$((correct * 56 / total))
-fi
+correctness=$((correct * 56 / total))
 
 cd ../src
 make clean &> /dev/null
