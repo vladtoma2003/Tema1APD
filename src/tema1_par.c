@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <pthread.h>
 
 #define CONTOUR_CONFIG_COUNT    16
 #define FILENAME_MAX_SIZE       50
@@ -14,6 +15,11 @@
 #define RESCALE_Y               2048
 
 #define CLAMP(v, min, max) if(v < min) { v = min; } else if(v > max) { v = max; }
+
+typedef struct thread {
+    int noThreads;
+    int id;
+} thread_structure;
 
 // Creates a map between the binary configuration (e.g. 0110_2) and the corresponding pixels
 // that need to be set on the output image. An array is used for this map since the keys are
@@ -188,6 +194,12 @@ ppm_image *rescale_image(ppm_image *image) {
     return new_image;
 }
 
+void *thread_function(void *arg) {
+    thread_structure *thread = (thread_structure *)arg;
+    printf("Hello from thread %d\n", thread->id);
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 4) {
         fprintf(stderr, "Usage: ./tema1 <in_file> <out_file> <P>\n");
@@ -197,6 +209,26 @@ int main(int argc, char *argv[]) {
     ppm_image *image = read_ppm(argv[1]);
     int step_x = STEP;
     int step_y = STEP;
+
+    int P = argv[3][0] - 48;
+    pthread_t tid[P];
+    // int thread_id[P];
+    thread_structure **thread_structure = calloc(P, sizeof(thread_structure));
+
+    for(int i = 0; i < P; ++i) {
+        thread_structure[i] = calloc(1, sizeof(thread_structure));
+        thread_structure[i]->id = i;
+        thread_structure[i]->noThreads = P;
+        int thread = pthread_create(&(tid[i]), NULL, thread_function, thread_structure[i]);
+        if (thread) {
+            printf("Error creating thread %d\n", i);
+            return 1;
+        }
+    }
+
+    for(int i = 0; i < P; ++i) {
+        pthread_join(tid[i], NULL);
+    }
 
     // 0. Initialize contour map
     ppm_image **contour_map = init_contour_map();
