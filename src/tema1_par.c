@@ -58,23 +58,6 @@ void update_image(ppm_image *image, ppm_image *contour, int x, int y) {
     }
 }
 
-// Calls `free` method on the utilized resources.
-void free_resources(ppm_image *image, ppm_image **contour_map, unsigned char **grid, int step_x) {
-    for (int i = 0; i < CONTOUR_CONFIG_COUNT; i++) {
-        free(contour_map[i]->data);
-        free(contour_map[i]);
-    }
-    free(contour_map);
-
-    for (int i = 0; i <= image->x / step_x; i++) {
-        free(grid[i]);
-    }
-    free(grid);
-
-    free(image->data);
-    free(image);
-}
-
 /*@brief Elibereaza memoria. Este nevoie doar de vectorul de thread-uri deoarece imaginile sunt salvate in interior
  * si toate thread-urile au pointer spre aceeasi imagine(scalata, normala, grid etc.)
  * @param threads vectorul de thread-uri
@@ -349,7 +332,6 @@ int main(int argc, char *argv[]) {
 
     pthread_barrier_destroy(&barrier);
 
-    // 4. Write output
     write_ppm(threads[0]->scaled_image, argv[2]);
 
     freeResources(threads, step_x);
