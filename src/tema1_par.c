@@ -28,28 +28,24 @@ typedef struct thread {
     pthread_barrier_t *barrier;
 } thread_structure;
 
-// Creates a map between the binary configuration (e.g. 0110_2) and the corresponding pixels
-// that need to be set on the output image. An array is used for this map since the keys are
-// binary numbers in 0-15. Contour images are located in the './contours' directory.
-ppm_image **init_contour_map() {
-    ppm_image **map = (ppm_image **)malloc(CONTOUR_CONFIG_COUNT * sizeof(ppm_image *));
-    if (!map) {
-        fprintf(stderr, "Unable to allocate memory\n");
-        exit(1);
-    }
-
-    for (int i = 0; i < CONTOUR_CONFIG_COUNT; i++) {
-        char filename[FILENAME_MAX_SIZE];
-        sprintf(filename, "./contours/%d.ppm", i);
-        map[i] = read_ppm(filename);
-    }
-
-    return map;
+/*@brief Returneaza minimul dintre doua numere
+ * @param a primul numar
+ * @param b al doilea numar
+ * @return minimul dintre a si b
+*/
+int min(int a, int b) {
+    return a < b ? a:b;
 }
 
 // Updates a particular section of an image with the corresponding contour pixels.
 // Used to create the complete contour image.
-void update_image(ppm_image *image, ppm_image *contour, int x, int y) {
+/* @brief Actualizeaza o anumita sectiune a imaginii cu pixelii corespunzatori conturului
+ * @param image imaginea
+ * @param contour conturul
+ * @param x coordonata x
+ * @param y coordonata y
+*/
+void update_image(ppm_image *image, ppm_image *contour, int x, int y) {  
     for (int i = 0; i < contour->x; i++) {
         for (int j = 0; j < contour->y; j++) {
             int contour_pixel_index = contour->x * i + j;
@@ -58,86 +54,6 @@ void update_image(ppm_image *image, ppm_image *contour, int x, int y) {
             image->data[image_pixel_index].red = contour->data[contour_pixel_index].red;
             image->data[image_pixel_index].green = contour->data[contour_pixel_index].green;
             image->data[image_pixel_index].blue = contour->data[contour_pixel_index].blue;
-        }
-    }
-}
-
-// Corresponds to step 1 of the marching squares algorithm, which focuses on sampling the image.
-// Builds a p x q grid of points with values which can be either 0 or 1, depending on how the
-// pixel values compare to the `sigma` reference value. The points are taken at equal distances
-// in the original image, based on the `step_x` and `step_y` arguments.
-unsigned char **sample_grid(ppm_image *image, int step_x, int step_y, unsigned char sigma) {
-    int p = image->x / step_x;
-    int q = image->y / step_y;
-
-    unsigned char **grid = (unsigned char **)malloc((p + 1) * sizeof(unsigned char*));
-    if (!grid) {
-        fprintf(stderr, "Unable to allocate memory\n");
-        exit(1);
-    }
-
-    for (int i = 0; i <= p; i++) {
-        grid[i] = (unsigned char *)malloc((q + 1) * sizeof(unsigned char));
-        if (!grid[i]) {
-            fprintf(stderr, "Unable to allocate memory\n");
-            exit(1);
-        }
-    }
-
-    for (int i = 0; i < p; i++) {
-        for (int j = 0; j < q; j++) {
-            ppm_pixel curr_pixel = image->data[i * step_x * image->y + j * step_y];
-
-            unsigned char curr_color = (curr_pixel.red + curr_pixel.green + curr_pixel.blue) / 3;
-
-            if (curr_color > sigma) {
-                grid[i][j] = 0;
-            } else {
-                grid[i][j] = 1;
-            }
-        }
-    }
-
-    // last sample points have no neighbors below / to the right, so we use pixels on the
-    // last row / column of the input image for them
-    for (int i = 0; i < p; i++) {
-        ppm_pixel curr_pixel = image->data[i * step_x * image->y + image->x - 1];
-
-        unsigned char curr_color = (curr_pixel.red + curr_pixel.green + curr_pixel.blue) / 3;
-
-        if (curr_color > sigma) {
-            grid[i][q] = 0;
-        } else {
-            grid[i][q] = 1;
-        }
-    }
-    for (int j = 0; j < q; j++) {
-        ppm_pixel curr_pixel = image->data[(image->x - 1) * image->y + j * step_y];
-
-        unsigned char curr_color = (curr_pixel.red + curr_pixel.green + curr_pixel.blue) / 3;
-
-        if (curr_color > sigma) {
-            grid[p][j] = 0;
-        } else {
-            grid[p][j] = 1;
-        }
-    }
-
-    return grid;
-}
-
-// Corresponds to step 2 of the marching squares algorithm, which focuses on identifying the
-// type of contour which corresponds to each subgrid. It determines the binary value of each
-// sample fragment of the original image and replaces the pixels in the original image with
-// the pixels of the corresponding contour image accordingly.
-void march(ppm_image *image, unsigned char **grid, ppm_image **contour_map, int step_x, int step_y) {
-    int p = image->x / step_x;
-    int q = image->y / step_y;
-
-    for (int i = 0; i < p; i++) {
-        for (int j = 0; j < q; j++) {
-            unsigned char k = 8 * grid[i][j] + 4 * grid[i][j + 1] + 2 * grid[i + 1][j + 1] + 1 * grid[i + 1][j];
-            update_image(image, contour_map[k], i * step_x, j * step_y);
         }
     }
 }
@@ -159,57 +75,44 @@ void free_resources(ppm_image *image, ppm_image **contour_map, unsigned char **g
     free(image);
 }
 
-ppm_image *rescale_image(ppm_image *image) {
-    uint8_t sample[3];
+/*@brief Elibereaza memoria. Este nevoie doar de vectorul de thread-uri deoarece imaginile sunt salvate in interior
+ * si toate thread-urile au pointer spre aceeasi imagine(scalata, normala, grid etc.)
+ * @param threads vectorul de thread-uri
+ * @param step_x pasul pe axa x
+*/
+void freeResources(thread_structure **threads, int step_x) {
+    for (int i = 0; i < CONTOUR_CONFIG_COUNT; ++i) {
+        free(threads[0]->contur[i]->data);
+        free(threads[0]->contur[i]);
+    }
+    free(threads[0]->contur);
 
-    // we only rescale downwards
-    if (image->x <= RESCALE_X && image->y <= RESCALE_Y) {
-        return image;
+    // Toate thread-urile au acceasi imagine. E safe sa folosesc threads[0] deoarece, in cazul in care este un singur thread
+    // voi avea cv inauntru garantat
+    for(int i = 0; i <= threads[0]->image->x / step_x; ++i) {
+        free(threads[0]->grid[i]);
+    }
+    free(threads[0]->grid);
+
+    free(threads[0]->image->data);
+    free(threads[0]->image);
+
+    if(threads[0]->image != threads[0]->scaled_image) {
+        free(threads[0]->scaled_image->data);
+        free(threads[0]->scaled_image);
     }
 
-    // alloc memory for image
-    ppm_image *new_image = (ppm_image *)malloc(sizeof(ppm_image));
-    if (!new_image) {
-        fprintf(stderr, "Unable to allocate memory\n");
-        exit(1);
+    int P = threads[0]->noThreads;
+    for(int i = 0; i < P; ++i) {
+        free(threads[i]);
     }
-    new_image->x = RESCALE_X;
-    new_image->y = RESCALE_Y;
-
-    new_image->data = (ppm_pixel*)malloc(new_image->x * new_image->y * sizeof(ppm_pixel));
-    if (!new_image) {
-        fprintf(stderr, "Unable to allocate memory\n");
-        exit(1);
-    }
-
-    // use bicubic interpolation for scaling
-    for (int i = 0; i < new_image->x; i++) {
-        for (int j = 0; j < new_image->y; j++) {
-            float u = (float)i / (float)(new_image->x - 1);
-            float v = (float)j / (float)(new_image->y - 1);
-            sample_bicubic(image, u, v, sample);
-
-            new_image->data[i * new_image->y + j].red = sample[0];
-            new_image->data[i * new_image->y + j].green = sample[1];
-            new_image->data[i * new_image->y + j].blue = sample[2];
-        }
-    }
-
-    free(image->data);
-    free(image);
-
-    return new_image;
+    free(threads);
 }
 
-int min(int a, int b) {
-    return a < b ? a:b;
-}
-
-void *thread_function(void *arg) {
-    thread_structure *thread = (thread_structure *)arg;
-    printf("Hello from thread %d\n", thread->id);
-
-    // CREARE CONTUR
+/*@brief Creeaza conturul
+ * @param informatii utile folosite de thread-ul curent
+*/
+void Contur(thread_structure *thread) {
     int start = thread->id * (double)CONTOUR_CONFIG_COUNT / thread->noThreads;
     int end = min((thread->id + 1) * (double)CONTOUR_CONFIG_COUNT / thread->noThreads, CONTOUR_CONFIG_COUNT);
 
@@ -218,48 +121,45 @@ void *thread_function(void *arg) {
         sprintf(filename, "./contours/%d.ppm", i);
         thread->contur[i] = read_ppm(filename);
     }
+}
 
-    // sync
-    pthread_barrier_wait(thread->barrier);
-
-    // RESCALE IMAGE
+/* @brief Scaleaza imaginea folosind interpolare bicubica
+ * @param thread informatii utile folosite de thread-ul curent
+*/
+void rescaleImage(thread_structure *thread) {
     uint8_t sample[3];
 
-    // we only rescale downwards
-    if (!(thread->image->x <= RESCALE_X && thread->image->y <= RESCALE_Y)) {
+    // Se imparte imaginea in functie de numarul de thread-uri si de thread-ul care ruleaza
+    int start = thread->id * (double)thread->scaled_image->x / thread->noThreads;
+    int end = min((thread->id + 1) * (double)thread->scaled_image->x / thread->noThreads, thread->scaled_image->x);
 
-        start = thread->id * (double)thread->scaled_image->x / thread->noThreads;
-        end = min((thread->id + 1) * (double)thread->scaled_image->x / thread->noThreads, thread->scaled_image->x);
+    // use bicubic interpolation for scaling
+    for (int i = start; i < end; i++) {
+        for (int j = 0; j < thread->scaled_image->y; j++) {
+            float u = (float)i / (float)(thread->scaled_image->x - 1);
+            float v = (float)j / (float)(thread->scaled_image->y - 1);
+            sample_bicubic(thread->image, u, v, sample);
 
-        // use bicubic interpolation for scaling
-        for (int i = start; i < end; i++) {
-            for (int j = 0; j < thread->scaled_image->y; j++) {
-                float u = (float)i / (float)(thread->scaled_image->x - 1);
-                float v = (float)j / (float)(thread->scaled_image->y - 1);
-                sample_bicubic(thread->image, u, v, sample);
-
-                thread->scaled_image->data[i * thread->scaled_image->y + j].red = sample[0];
-                thread->scaled_image->data[i * thread->scaled_image->y + j].green = sample[1];
-                thread->scaled_image->data[i * thread->scaled_image->y + j].blue = sample[2];
-            }
+            thread->scaled_image->data[i * thread->scaled_image->y + j].red = sample[0];
+            thread->scaled_image->data[i * thread->scaled_image->y + j].green = sample[1];
+            thread->scaled_image->data[i * thread->scaled_image->y + j].blue = sample[2];
         }
-        pthread_barrier_wait(thread->barrier);
     }
-    // in cazul in care nu intra pe if, nu se va schimba nimic.
-    // Chiar daca toate thread-urile schimba valoarea nu este problema deoarece este aceeasi adresa la toate
-    // Toate thread-urile au lucrat pe aceeasi zona de memorie
-    thread->image = thread->scaled_image;
+}
 
-    // SAMPLE GRID
-    int step_x = STEP;
-    int step_y = STEP;
+/* @brief Creeaza grid-ul
+ * @param thread informatii utile folosite de thread-ul curent
+ * @param step_x pasul pe axa x
+ * @param step_y pasul pe axa y
+ * @param sigma valoarea de prag
+ * @param p numarul de linii
+ * @param q numarul de coloane
+*/
+void createGrid(thread_structure *thread, int step_x, int step_y, int sigma, int p, int q) {
 
-    int p = thread->image->x / step_x;
-    int q = thread->image->y / step_y;
-    int sigma = SIGMA;
-
-    start = thread->id * (double)q / thread->noThreads;
-    end = min((thread->id + 1) * (double)p / thread->noThreads, p);
+    // se imparte imaginea in functie de numarul de thread-uri si de thread-ul care ruleaza
+    int start = thread->id * (double)q / thread->noThreads;
+    int end = min((thread->id + 1) * (double)p / thread->noThreads, p);
 
     for (int i = start; i < end; i++) {
         for (int j = 0; j < q; j++) {
@@ -289,6 +189,7 @@ void *thread_function(void *arg) {
         }
     }
 
+    // schimb start si stop pentru a paraleliza si forul de mai jos
     start = thread->id * (double)q / thread->noThreads;
     end = min((thread->id + 1) * (double)q / thread->noThreads, q);
 
@@ -303,17 +204,58 @@ void *thread_function(void *arg) {
             thread->grid[p][j] = 1;
         }
     }
+}
 
-    pthread_barrier_wait(thread->barrier);
-
-
-    // MARCH
+/* @brief Marcheaza conturul
+ * @param thread informatii utile folosite de thread-ul curent
+ * @param step_x pasul pe axa x
+ * @param step_y pasul pe axa y
+ * @param p numarul de linii
+ * @param q numarul de coloane
+*/
+void march(thread_structure *thread, int step_x, int step_y, int p, int q) {
+    int start = thread->id * (double)q / thread->noThreads;
+    int end = min((thread->id + 1) * (double)q / thread->noThreads, q);
     for (int i = 0; i < p; i++) {
         for (int j = start; j < end; j++) {
             unsigned char k = 8 * thread->grid[i][j] + 4 * thread->grid[i][j + 1] + 2 * thread->grid[i + 1][j + 1] + 1 * thread->grid[i + 1][j];
             update_image(thread->image, thread->contur[k], i * step_x, j * step_y);
         }
     }
+}
+
+/* @brief Functia executata de fiecare thread
+ * @param arg informatii utile folosite de thread-ul curent
+*/
+void *thread_function(void *arg) {
+    thread_structure *thread = (thread_structure *)arg;
+
+    Contur(thread);
+    pthread_barrier_wait(thread->barrier);
+
+    // Se da rescale doar daca imaginea este mai mare decat cea dorita
+    if (!(thread->image->x <= RESCALE_X && thread->image->y <= RESCALE_Y)) {
+        rescaleImage(thread);
+        pthread_barrier_wait(thread->barrier);
+    }
+
+    // in cazul in care nu intra pe if, nu se va schimba nimic.
+    // Chiar daca toate thread-urile schimba valoarea nu este problema deoarece este aceeasi adresa la toate
+    // Toate thread-urile au lucrat pe aceeasi zona de memorie
+    thread->image = thread->scaled_image;
+
+    int step_x = STEP;
+    int step_y = STEP;
+
+    int p = thread->image->x / step_x;
+    int q = thread->image->y / step_y;
+    int sigma = SIGMA;
+
+    createGrid(thread, step_x, step_y, sigma, p, q);
+
+    pthread_barrier_wait(thread->barrier);
+
+    march(thread, step_x, step_y, p, q);
 
     return NULL;
 }
@@ -334,7 +276,7 @@ int main(int argc, char *argv[]) {
     // int thread_id[P];
     thread_structure **threads = calloc(P, sizeof(thread_structure));
 
-    //initialize contur
+    // initilzez conturul
     ppm_image **map = (ppm_image **)malloc(CONTOUR_CONFIG_COUNT * sizeof(ppm_image *));
     if (!map) {
         fprintf(stderr, "Unable to allocate memory\n");
@@ -369,6 +311,7 @@ int main(int argc, char *argv[]) {
     int p = image->x / step_x;
     int q = image->y / step_y;
 
+    // aloc memorie pentru grid
     unsigned char **grid = (unsigned char **)malloc((p + 1) * sizeof(unsigned char*));
     if (!grid) {
         fprintf(stderr, "Unable to allocate memory\n");
@@ -383,6 +326,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Creez thread-uri si le dau informatiile necesare
     for(int i = 0; i < P; ++i) {
         threads[i] = calloc(1, sizeof(thread_structure));
         threads[i]->id = i;
@@ -408,7 +352,7 @@ int main(int argc, char *argv[]) {
     // 4. Write output
     write_ppm(threads[0]->scaled_image, argv[2]);
 
-    free_resources(threads[0]->scaled_image, threads[0]->contur, threads[0]->grid, step_x);
+    freeResources(threads, step_x);
 
     return 0;
 }
