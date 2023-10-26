@@ -19,6 +19,13 @@
 typedef struct thread {
     int noThreads;
     int id;
+    unsigned char **grid;
+
+    ppm_image **contur;
+    ppm_image *image;
+    ppm_image *scaled_image;
+
+    pthread_barrier_t *barrier;
 } thread_structure;
 
 // Creates a map between the binary configuration (e.g. 0110_2) and the corresponding pixels
@@ -194,9 +201,120 @@ ppm_image *rescale_image(ppm_image *image) {
     return new_image;
 }
 
+int min(int a, int b) {
+    return a < b ? a:b;
+}
+
 void *thread_function(void *arg) {
     thread_structure *thread = (thread_structure *)arg;
     printf("Hello from thread %d\n", thread->id);
+
+    // CREARE CONTUR
+    int start = thread->id * (double)CONTOUR_CONFIG_COUNT / thread->noThreads;
+    int end = min((thread->id + 1) * (double)CONTOUR_CONFIG_COUNT / thread->noThreads, CONTOUR_CONFIG_COUNT);
+
+    for (int i = start; i < end; i++) {
+        char filename[FILENAME_MAX_SIZE];
+        sprintf(filename, "./contours/%d.ppm", i);
+        thread->contur[i] = read_ppm(filename);
+    }
+
+    // sync
+    pthread_barrier_wait(thread->barrier);
+
+    // RESCALE IMAGE
+    uint8_t sample[3];
+
+    // we only rescale downwards
+    if (!(thread->image->x <= RESCALE_X && thread->image->y <= RESCALE_Y)) {
+
+        start = thread->id * (double)thread->scaled_image->x / thread->noThreads;
+        end = min((thread->id + 1) * (double)thread->scaled_image->x / thread->noThreads, thread->scaled_image->x);
+
+        // use bicubic interpolation for scaling
+        for (int i = start; i < end; i++) {
+            for (int j = 0; j < thread->scaled_image->y; j++) {
+                float u = (float)i / (float)(thread->scaled_image->x - 1);
+                float v = (float)j / (float)(thread->scaled_image->y - 1);
+                sample_bicubic(thread->image, u, v, sample);
+
+                thread->scaled_image->data[i * thread->scaled_image->y + j].red = sample[0];
+                thread->scaled_image->data[i * thread->scaled_image->y + j].green = sample[1];
+                thread->scaled_image->data[i * thread->scaled_image->y + j].blue = sample[2];
+            }
+        }
+        pthread_barrier_wait(thread->barrier);
+    }
+    // in cazul in care nu intra pe if, nu se va schimba nimic.
+    // Chiar daca toate thread-urile schimba valoarea nu este problema deoarece este aceeasi adresa la toate
+    // Toate thread-urile au lucrat pe aceeasi zona de memorie
+    thread->image = thread->scaled_image;
+
+    // SAMPLE GRID
+    int step_x = STEP;
+    int step_y = STEP;
+
+    int p = thread->image->x / step_x;
+    int q = thread->image->y / step_y;
+    int sigma = SIGMA;
+
+    start = thread->id * (double)q / thread->noThreads;
+    end = min((thread->id + 1) * (double)p / thread->noThreads, p);
+
+    for (int i = start; i < end; i++) {
+        for (int j = 0; j < q; j++) {
+            ppm_pixel curr_pixel = thread->image->data[i * step_x * thread->image->y + j * step_y];
+
+            unsigned char curr_color = (curr_pixel.red + curr_pixel.green + curr_pixel.blue) / 3;
+
+            if (curr_color > sigma) {
+                thread->grid[i][j] = 0;
+            } else {
+                thread->grid[i][j] = 1;
+            }
+        }
+    }
+
+    // last sample points have no neighbors below / to the right, so we use pixels on the
+    // last row / column of the input image for them
+    for (int i = start; i < end; i++) {
+        ppm_pixel curr_pixel = thread->image->data[i * step_x * thread->image->y + thread->image->x - 1];
+
+        unsigned char curr_color = (curr_pixel.red + curr_pixel.green + curr_pixel.blue) / 3;
+
+        if (curr_color > sigma) {
+            thread->grid[i][q] = 0;
+        } else {
+            thread->grid[i][q] = 1;
+        }
+    }
+
+    start = thread->id * (double)q / thread->noThreads;
+    end = min((thread->id + 1) * (double)q / thread->noThreads, q);
+
+    for (int j = start; j < end; j++) {
+        ppm_pixel curr_pixel = thread->image->data[(thread->image->x - 1) * thread->image->y + j * step_y];
+
+        unsigned char curr_color = (curr_pixel.red + curr_pixel.green + curr_pixel.blue) / 3;
+
+        if (curr_color > sigma) {
+            thread->grid[p][j] = 0;
+        } else {
+            thread->grid[p][j] = 1;
+        }
+    }
+
+    pthread_barrier_wait(thread->barrier);
+
+
+    // MARCH
+    for (int i = 0; i < p; i++) {
+        for (int j = start; j < end; j++) {
+            unsigned char k = 8 * thread->grid[i][j] + 4 * thread->grid[i][j + 1] + 2 * thread->grid[i + 1][j + 1] + 1 * thread->grid[i + 1][j];
+            update_image(thread->image, thread->contur[k], i * step_x, j * step_y);
+        }
+    }
+
     return NULL;
 }
 
@@ -207,19 +325,74 @@ int main(int argc, char *argv[]) {
     }
 
     ppm_image *image = read_ppm(argv[1]);
+    // usless mai departe
     int step_x = STEP;
     int step_y = STEP;
 
     int P = argv[3][0] - 48;
     pthread_t tid[P];
     // int thread_id[P];
-    thread_structure **thread_structure = calloc(P, sizeof(thread_structure));
+    thread_structure **threads = calloc(P, sizeof(thread_structure));
+
+    //initialize contur
+    ppm_image **map = (ppm_image **)malloc(CONTOUR_CONFIG_COUNT * sizeof(ppm_image *));
+    if (!map) {
+        fprintf(stderr, "Unable to allocate memory\n");
+        exit(1);
+    }
+
+    // create barrier
+    pthread_barrier_t barrier;
+    pthread_barrier_init(&barrier, NULL, P);
+
+    // alloc space for new scaled image
+    ppm_image *new_image;
+    if(!(image->x <= RESCALE_X && image->y <= RESCALE_Y)) { // only use memory if needed
+        new_image = (ppm_image *)malloc(sizeof(ppm_image));
+        if (!new_image) {
+            fprintf(stderr, "Unable to allocate memory\n");
+            exit(1);
+        }
+        new_image->x = RESCALE_X;
+        new_image->y = RESCALE_Y;
+
+        new_image->data = (ppm_pixel*)malloc(new_image->x * new_image->y * sizeof(ppm_pixel));
+        if (!new_image) {
+            fprintf(stderr, "Unable to allocate memory\n");
+            exit(1);
+        }
+    } else {
+        new_image = image;
+    }
+
+    // alocate memory for grid
+    int p = image->x / step_x;
+    int q = image->y / step_y;
+
+    unsigned char **grid = (unsigned char **)malloc((p + 1) * sizeof(unsigned char*));
+    if (!grid) {
+        fprintf(stderr, "Unable to allocate memory\n");
+        exit(1);
+    }
+
+    for (int i = 0; i <= p; i++) {
+        grid[i] = (unsigned char *)malloc((q + 1) * sizeof(unsigned char));
+        if (!grid[i]) {
+            fprintf(stderr, "Unable to allocate memory\n");
+            exit(1);
+        }
+    }
 
     for(int i = 0; i < P; ++i) {
-        thread_structure[i] = calloc(1, sizeof(thread_structure));
-        thread_structure[i]->id = i;
-        thread_structure[i]->noThreads = P;
-        int thread = pthread_create(&(tid[i]), NULL, thread_function, thread_structure[i]);
+        threads[i] = calloc(1, sizeof(thread_structure));
+        threads[i]->id = i;
+        threads[i]->noThreads = P;
+        threads[i]->contur = map;
+        threads[i]->image = image;
+        threads[i]->scaled_image = new_image;
+        threads[i]->grid = grid;
+        threads[i]->barrier = &barrier;
+        int thread = pthread_create(&(tid[i]), NULL, thread_function, threads[i]);
         if (thread) {
             printf("Error creating thread %d\n", i);
             return 1;
@@ -230,22 +403,12 @@ int main(int argc, char *argv[]) {
         pthread_join(tid[i], NULL);
     }
 
-    // 0. Initialize contour map
-    ppm_image **contour_map = init_contour_map();
-
-    // 1. Rescale the image
-    ppm_image *scaled_image = rescale_image(image);
-
-    // 2. Sample the grid
-    unsigned char **grid = sample_grid(scaled_image, step_x, step_y, SIGMA);
-
-    // 3. March the squares
-    march(scaled_image, grid, contour_map, step_x, step_y);
+    pthread_barrier_destroy(&barrier);
 
     // 4. Write output
-    write_ppm(scaled_image, argv[2]);
+    write_ppm(threads[0]->scaled_image, argv[2]);
 
-    free_resources(scaled_image, contour_map, grid, step_x);
+    free_resources(threads[0]->scaled_image, threads[0]->contur, threads[0]->grid, step_x);
 
     return 0;
 }
