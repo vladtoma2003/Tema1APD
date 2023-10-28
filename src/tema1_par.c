@@ -92,10 +92,10 @@ void freeResources(thread_structure **threads, int step_x) {
     free(threads);
 }
 
-/*@brief Creeaza conturul
+/*@brief Citeste contururile din directorul ./contours
  * @param informatii utile folosite de thread-ul curent
 */
-void Contur(thread_structure *thread) {
+void contur(thread_structure *thread) {
     int start = thread->id * (double)CONTOUR_CONFIG_COUNT / thread->noThreads;
     int end = min((thread->id + 1) * (double)CONTOUR_CONFIG_COUNT / thread->noThreads, CONTOUR_CONFIG_COUNT);
 
@@ -213,7 +213,7 @@ void march(thread_structure *thread, int step_x, int step_y, int p, int q) {
 void *thread_function(void *arg) {
     thread_structure *thread = (thread_structure *)arg;
 
-    Contur(thread);
+    contur(thread);
     pthread_barrier_wait(thread->barrier);
 
     // Se da rescale doar daca imaginea este mai mare decat cea dorita
@@ -247,6 +247,11 @@ int main(int argc, char *argv[]) {
     if (argc < 4) {
         fprintf(stderr, "Usage: ./tema1 <in_file> <out_file> <P>\n");
         return 1;
+    }
+
+    if(atoi(argv[3]) <= 0) {
+        fprintf(stderr, "P must be a positive number\n");
+        return -1;
     }
 
     ppm_image *image = read_ppm(argv[1]);
