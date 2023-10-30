@@ -38,7 +38,6 @@ Codul sursă este structurat în următoarele secțiuni principale:
 **8. Functia `freeResources`**
   - Elibereaza memoria alocata pentru algoritm.
 
-
 **9. Functia `threadFunction`**
   -  Functia care se executa la crearea unui thread.
   - Aici se cheama restul functiilor pentru algoritmi.
