@@ -1,7 +1,7 @@
 # Tema1 APD - Paralelizarea Algoritmului Marching Squares
 
 ## Descriere
-Scopul proiectului este paralelizarea algoritmului Marching Squares
+Scopul proiectului este paralelizarea algoritmului Marching Squares.
 
 ## Structura codului
 Codul sursă este structurat în următoarele secțiuni principale:
@@ -43,6 +43,11 @@ Codul sursă este structurat în următoarele secțiuni principale:
   -  Functia care se executa la crearea unui thread.
   - Aici se cheama restul functiilor pentru algoritmi.
   - Thread-urile asteapta la o bariera dupa terminarea fiecarei functii deoarece nu se poate continua algoritmul pana nu se termina modificarea imaginii.
+
+**10. Functia `main`**
+  - Aici se aloca memoria pentru imagini si pentru structura de thread-uri.
+  - Se creeaza thread-urile.
+  - Se creeaza bariera si se salveaza un pointer pentru a fi folosita in functia `threadFunction`.
 
 ## Utilizare
 Informatii pentru compilare si rulare:
